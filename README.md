@@ -24,8 +24,8 @@ npm run dev
 ```
 
 The repo ships a tracked `.env` with SQLite + dev placeholders so Prisma and
-Next.js work out of the box. Put real secrets (especially `ANTHROPIC_API_KEY`)
-in `.env.local`, which is gitignored and takes precedence.
+Next.js work out of the box. Put real secrets (especially `GEMINI_API_KEY`)
+in `.env.local`, which is gitignored and takes precedence. The `GEMINI_API_KEY` is the only one you must supply yourself.
 
 URL extraction works by server-side fetching the page HTML and stripping
 tags before sending it to Gemini — pages that require JavaScript or auth
