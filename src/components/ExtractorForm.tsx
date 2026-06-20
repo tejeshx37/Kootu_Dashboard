@@ -5,7 +5,16 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useToast } from './Toast';
 
-type Tab = 'url' | 'text' | 'file';
+type Tab = 'url' | 'text' | 'file' | 'image';
+
+const IMAGE_MIME_PREFIX = 'image/';
+const IMAGE_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+function isImageFile(f: File | null): boolean {
+  if (!f) return false;
+  if (f.type.startsWith(IMAGE_MIME_PREFIX)) return true;
+  const name = f.name.toLowerCase();
+  return IMAGE_EXT.some((e) => name.endsWith(e));
+}
 type Extracted = {
   title: string;
   merchant: string;
@@ -19,10 +28,13 @@ export function ExtractorForm() {
   const router = useRouter();
   const { show } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<Tab>('url');
   const [url, setUrl] = useState('');
   const [text, setText] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [image, setImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<Extracted[] | null>(null);
@@ -39,6 +51,7 @@ export function ExtractorForm() {
       if (tab === 'url') form.set('content', url);
       else if (tab === 'text') form.set('content', text);
       else if (tab === 'file' && file) form.set('file', file);
+      else if (tab === 'image' && image) form.set('file', image);
 
       const res = await fetch('/api/extract', { method: 'POST', body: form });
       const data = await res.json();
@@ -91,13 +104,28 @@ export function ExtractorForm() {
     !loading &&
     ((tab === 'url' && url.trim().length > 0) ||
       (tab === 'text' && text.trim().length > 0) ||
-      (tab === 'file' && !!file));
+      (tab === 'file' && !!file) ||
+      (tab === 'image' && !!image));
+
+  function pickImage(f: File | null) {
+    if (!isImageFile(f)) {
+      setImage(null);
+      setImagePreview(null);
+      if (f) setError('Please choose an image file (JPG, PNG, WEBP, or GIF).');
+      return;
+    }
+    setImage(f);
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = () => setImagePreview(typeof reader.result === 'string' ? reader.result : null);
+    reader.readAsDataURL(f!);
+  }
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl bg-white p-5 shadow-sm">
         <div className="mb-4 flex gap-1 rounded-lg bg-slate-100 p-1">
-          {(['url', 'text', 'file'] as Tab[]).map((t) => (
+          {(['url', 'text', 'file', 'image'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -106,7 +134,7 @@ export function ExtractorForm() {
                 tab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
               )}
             >
-              {t === 'url' ? 'URL' : t === 'text' ? 'Text' : 'File'}
+              {t === 'url' ? 'URL' : t === 'text' ? 'Text' : t === 'file' ? 'File' : 'Image'}
             </button>
           ))}
         </div>
@@ -158,6 +186,35 @@ export function ExtractorForm() {
               accept=".pdf,.docx"
               className="hidden"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </div>
+        )}
+
+        {tab === 'image' && (
+          <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              pickImage(e.dataTransfer.files?.[0] ?? null);
+            }}
+            onClick={() => imageInputRef.current?.click()}
+            className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center hover:border-primary"
+          >
+            {imagePreview ? (
+              <img src={imagePreview} alt="preview" className="max-h-64 rounded-md object-contain" />
+            ) : (
+              <span className="text-2xl">🖼️</span>
+            )}
+            <p className="text-sm font-medium text-slate-700">
+              {image ? image.name : 'Drag & drop a poster image, or click to browse'}
+            </p>
+            <p className="text-xs text-slate-500">Accepts .jpg, .png, .webp, .gif</p>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => pickImage(e.target.files?.[0] ?? null)}
             />
           </div>
         )}

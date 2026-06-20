@@ -56,6 +56,23 @@ async function readFormFile(req: NextRequest): Promise<{ sourceType: string; con
   return { sourceType, content };
 }
 
+function guessImageMime(name: string): string {
+  const ext = name.toLowerCase().split('.').pop();
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    default:
+      return '';
+  }
+}
+
 async function fetchUrlAsText(url: string): Promise<string> {
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (KootuExtractor)' },
@@ -82,12 +99,13 @@ export async function POST(req: NextRequest) {
   try {
     const { sourceType, content, file } = await readFormFile(req);
 
-    if (!['url', 'text', 'pdf', 'docx'].includes(sourceType)) {
+    if (!['url', 'text', 'pdf', 'docx', 'image'].includes(sourceType)) {
       return NextResponse.json({ error: 'Invalid sourceType' }, { status: 400 });
     }
 
     let userMessage = '';
     let sourceRef: string | null = null;
+    let imagePart: { inlineData: { data: string; mimeType: string } } | null = null;
 
     if (sourceType === 'text') {
       if (!content.trim()) return NextResponse.json({ error: 'No content provided' }, { status: 400 });
@@ -111,9 +129,18 @@ export async function POST(req: NextRequest) {
       sourceRef = file.name;
       const result = await mammoth.extractRawText({ buffer: file.buffer });
       userMessage = result.value;
+    } else if (sourceType === 'image') {
+      if (!file) return NextResponse.json({ error: 'No image uploaded' }, { status: 400 });
+      sourceRef = file.name;
+      const mimeType = file.type || guessImageMime(file.name);
+      if (!mimeType.startsWith('image/')) {
+        return NextResponse.json({ error: 'Uploaded file is not an image' }, { status: 400 });
+      }
+      imagePart = { inlineData: { data: file.buffer.toString('base64'), mimeType } };
+      userMessage = 'Extract every offer, deal, discount, or promotion shown in this image.';
     }
 
-    if (!userMessage.trim()) {
+    if (!userMessage.trim() && !imagePart) {
       return NextResponse.json({ error: 'No extractable content found' }, { status: 400 });
     }
 
@@ -123,9 +150,12 @@ export async function POST(req: NextRequest) {
     }
 
     const ai = new GoogleGenAI({ apiKey });
+    const parts: any[] = [];
+    if (imagePart) parts.push(imagePart);
+    if (userMessage) parts.push({ text: userMessage });
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: userMessage,
+      contents: [{ role: 'user', parts }],
       config: {
         systemInstruction: SYSTEM_PROMPT,
         responseMimeType: 'application/json',
