@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/apiAuth';
 import { mirrorExtractionLog } from '@/lib/firebase';
@@ -77,15 +79,144 @@ function guessImageMime(name: string): string {
   }
 }
 
-async function fetchUrlAsText(url: string): Promise<{ text: string; html: string }> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (KootuExtractor)' },
-    signal: AbortSignal.timeout(15_000),
+// ---- SSRF guard -----------------------------------------------------------
+// Any URL passed to fetch() in this route flows through assertPublicUrl(), so
+// the admin-gated input can't make us hit loopback / RFC1918 / link-local /
+// cloud-metadata addresses, and redirects are followed manually with the same
+// check on every hop.
+
+const PRIVATE_V4: Array<[string, number]> = [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16], // includes 169.254.169.254 metadata
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4],
+];
+
+function v4ToInt(ip: string): number {
+  return ip.split('.').reduce((acc, oct) => (acc << 8) + Number(oct), 0) >>> 0;
+}
+
+function isPrivateV4(ip: string): boolean {
+  const ipInt = v4ToInt(ip);
+  return PRIVATE_V4.some(([base, bits]) => {
+    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+    return (ipInt & mask) === (v4ToInt(base) & mask);
   });
-  if (!res.ok) {
+}
+
+function isPrivateV6(ip: string): boolean {
+  const lc = ip.toLowerCase();
+  if (lc === '::1' || lc === '::') return true;
+  if (lc.startsWith('fe80:') || lc.startsWith('fc') || lc.startsWith('fd')) return true;
+  // ::ffff:a.b.c.d — IPv4-mapped
+  const mapped = lc.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isPrivateV4(mapped[1]);
+  return false;
+}
+
+function isPrivateAddress(addr: string): boolean {
+  if (net.isIPv4(addr)) return isPrivateV4(addr);
+  if (net.isIPv6(addr)) return isPrivateV6(addr);
+  return true; // unknown family — treat as unsafe
+}
+
+async function assertPublicUrl(raw: string): Promise<URL> {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error('Invalid URL');
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new Error('Only http(s) URLs are allowed');
+  }
+  const host = u.hostname;
+  // Reject literal IP hosts that are already private without DNS round-trip.
+  if (net.isIP(host) && isPrivateAddress(host)) {
+    throw new Error('Refusing to fetch private/loopback address');
+  }
+  const records = await dns.lookup(host, { all: true });
+  if (records.length === 0) throw new Error('DNS lookup failed');
+  for (const r of records) {
+    if (isPrivateAddress(r.address)) {
+      throw new Error('Refusing to fetch host that resolves to a private address');
+    }
+  }
+  return u;
+}
+
+async function safeFetch(rawUrl: string, init: RequestInit & { maxBytes?: number } = {}): Promise<{ status: number; headers: Headers; body: Buffer | null }> {
+  const MAX_HOPS = 4;
+  let nextUrl = rawUrl;
+  for (let hop = 0; hop < MAX_HOPS; hop++) {
+    const u = await assertPublicUrl(nextUrl);
+    const res = await fetch(u, {
+      ...init,
+      redirect: 'manual',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (KootuExtractor)',
+        ...(init.headers as Record<string, string> | undefined),
+      },
+    });
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location');
+      if (!loc) return { status: res.status, headers: res.headers, body: null };
+      nextUrl = new URL(loc, u).toString();
+      continue;
+    }
+    // Body read with running byte cap (cheaper than buffering 100MB only to discard).
+    const cap = init.maxBytes ?? 5 * 1024 * 1024;
+    const declared = Number(res.headers.get('content-length') || 0);
+    if (declared && declared > cap) {
+      // Don't even read it.
+      return { status: res.status, headers: res.headers, body: null };
+    }
+    const reader = res.body?.getReader();
+    if (!reader) return { status: res.status, headers: res.headers, body: Buffer.alloc(0) };
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > cap) {
+        try { await reader.cancel(); } catch {}
+        return { status: res.status, headers: res.headers, body: null };
+      }
+      chunks.push(value);
+    }
+    return { status: res.status, headers: res.headers, body: Buffer.concat(chunks) };
+  }
+  throw new Error('Too many redirects');
+}
+
+// ---- Page + image fetch ---------------------------------------------------
+
+const PAGE_MAX_BYTES = 4 * 1024 * 1024;
+const IMAGE_FETCH_LIMIT = 10;
+const IMAGE_CANDIDATE_LIMIT = IMAGE_FETCH_LIMIT * 3;
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_MIN_BYTES = 8 * 1024;
+const PAGE_TIMEOUT_MS = 15_000;
+const IMAGE_TIMEOUT_MS = 10_000;
+
+async function fetchUrlAsText(url: string): Promise<{ text: string; html: string }> {
+  const res = await safeFetch(url, {
+    signal: AbortSignal.timeout(PAGE_TIMEOUT_MS),
+    maxBytes: PAGE_MAX_BYTES,
+  });
+  if (res.status < 200 || res.status >= 300 || !res.body) {
     throw new Error(`Failed to fetch URL (HTTP ${res.status})`);
   }
-  const html = await res.text();
+  const html = res.body.toString('utf8');
   const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -97,54 +228,77 @@ async function fetchUrlAsText(url: string): Promise<{ text: string; html: string
   return { text, html };
 }
 
-const IMAGE_FETCH_LIMIT = 10;
-const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-const IMAGE_TIMEOUT_MS = 10_000;
+function shouldSkipImageUrl(src: string): boolean {
+  if (!src || src.startsWith('data:')) return true;
+  if (/\.(svg)(\?|$)/i.test(src)) return true;
+  if (/(?:^|\/)(icon|logo|favicon|sprite|avatar|emoji)/i.test(src)) return true;
+  return false;
+}
+
+function parseSrcsetUrls(value: string): string[] {
+  // srcset is a comma-separated list of "url descriptor" entries; descriptors
+  // are optional and themselves may contain spaces in funky CDN cases, so we
+  // grab whitespace-leading tokens off each comma slice.
+  const out: string[] = [];
+  for (const entry of value.split(',')) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const url = trimmed.split(/\s+/)[0];
+    if (url) out.push(url);
+  }
+  return out;
+}
 
 function extractImageUrls(html: string, pageUrl: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  // <img src="..."> and srcset variants
-  const imgRe = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = imgRe.exec(html)) !== null) {
-    let src = m[1].trim();
-    if (!src || src.startsWith('data:')) continue;
-    // Skip obvious sprite/icon paths and SVGs (Gemini chokes on raster-less SVG)
-    if (/\.(svg)(\?|$)/i.test(src)) continue;
-    if (/(?:^|\/)(icon|logo|favicon|sprite|avatar|emoji)/i.test(src)) continue;
+  const push = (raw: string) => {
+    const src = raw.trim();
+    if (shouldSkipImageUrl(src)) return;
+    let abs: string;
     try {
-      const abs = new URL(src, pageUrl).toString();
-      if (!seen.has(abs)) {
-        seen.add(abs);
-        out.push(abs);
-      }
+      abs = new URL(src, pageUrl).toString();
     } catch {
-      // ignore unparseable
+      return;
     }
-    if (out.length >= IMAGE_FETCH_LIMIT * 3) break; // collect a bit extra to filter from
+    if (seen.has(abs)) return;
+    seen.add(abs);
+    out.push(abs);
+  };
+
+  // <img ...> attrs: src, data-src, srcset, data-srcset
+  const imgRe = /<img\b([^>]*)>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(html)) !== null && out.length < IMAGE_CANDIDATE_LIMIT) {
+    const attrs = m[1];
+    const srcAttr = /\b(?:data-)?src\s*=\s*["']([^"']+)["']/i.exec(attrs);
+    if (srcAttr) push(srcAttr[1]);
+    const srcsetAttr = /\b(?:data-)?srcset\s*=\s*["']([^"']+)["']/i.exec(attrs);
+    if (srcsetAttr) for (const u of parseSrcsetUrls(srcsetAttr[1])) push(u);
   }
-  return out;
+
+  // <source srcset="..."> inside <picture>
+  const sourceRe = /<source\b[^>]*\bsrcset\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  while ((m = sourceRe.exec(html)) !== null && out.length < IMAGE_CANDIDATE_LIMIT) {
+    for (const u of parseSrcsetUrls(m[1])) push(u);
+  }
+
+  return out.slice(0, IMAGE_CANDIDATE_LIMIT);
 }
 
 async function fetchImage(
   url: string
 ): Promise<{ data: string; mimeType: string } | null> {
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (KootuExtractor)' },
+    const res = await safeFetch(url, {
       signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+      maxBytes: IMAGE_MAX_BYTES,
     });
-    if (!res.ok) return null;
+    if (res.status < 200 || res.status >= 300 || !res.body) return null;
     const ct = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     if (!ct.startsWith('image/') || ct === 'image/svg+xml') return null;
-    const len = Number(res.headers.get('content-length') || 0);
-    if (len && len > IMAGE_MAX_BYTES) return null;
-    const ab = await res.arrayBuffer();
-    if (ab.byteLength > IMAGE_MAX_BYTES) return null;
-    // Skip very small images — likely UI chrome, not posters.
-    if (ab.byteLength < 8 * 1024) return null;
-    return { data: Buffer.from(ab).toString('base64'), mimeType: ct };
+    if (res.body.byteLength < IMAGE_MIN_BYTES) return null;
+    return { data: res.body.toString('base64'), mimeType: ct };
   } catch {
     return null;
   }
@@ -153,12 +307,15 @@ async function fetchImage(
 async function fetchPageImages(
   imageUrls: string[]
 ): Promise<Array<{ inlineData: { data: string; mimeType: string } }>> {
-  const candidates = imageUrls.slice(0, IMAGE_FETCH_LIMIT * 3);
-  const fetched = await Promise.all(candidates.map(fetchImage));
-  const ok = fetched.filter(
-    (x): x is { data: string; mimeType: string } => x !== null
-  );
-  return ok.slice(0, IMAGE_FETCH_LIMIT).map((img) => ({ inlineData: img }));
+  // Sequential walk so we stop the moment we have IMAGE_FETCH_LIMIT valid
+  // images instead of speculatively pulling 30 and dropping 20.
+  const out: Array<{ inlineData: { data: string; mimeType: string } }> = [];
+  for (const url of imageUrls) {
+    if (out.length >= IMAGE_FETCH_LIMIT) break;
+    const img = await fetchImage(url);
+    if (img) out.push({ inlineData: img });
+  }
+  return out;
 }
 
 export async function POST(req: NextRequest) {
