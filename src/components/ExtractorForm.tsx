@@ -157,7 +157,7 @@ export function ExtractorForm() {
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
             />
             <p className="mt-2 text-xs text-slate-500">
-              Gemini will read the page contents and extract all offers from it.
+              Gemini reads both the page text and any poster images embedded in it (up to 10), so sites like velacherytalks where ads are graphics work too.
             </p>
           </div>
         )}
