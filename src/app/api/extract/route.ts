@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import mammoth from 'mammoth';
 import { prisma } from '@/lib/prisma';
+import { requireAuth } from '@/lib/apiAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -57,6 +58,9 @@ async function readFormFile(req: NextRequest): Promise<{ sourceType: string; con
 }
 
 export async function POST(req: NextRequest) {
+  const unauthorized = await requireAuth(req);
+  if (unauthorized) return unauthorized;
+
   try {
     const { sourceType, content, file } = await readFormFile(req);
 

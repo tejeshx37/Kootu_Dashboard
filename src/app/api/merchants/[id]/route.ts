@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireAuth } from '@/lib/apiAuth';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const unauthorized = await requireAuth(req);
+  if (unauthorized) return unauthorized;
+
   const id = parseInt(params.id, 10);
   if (isNaN(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
 

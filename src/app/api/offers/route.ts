@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireAuth } from '@/lib/apiAuth';
 
 export async function GET(req: NextRequest) {
+  const unauthorized = await requireAuth(req);
+  if (unauthorized) return unauthorized;
+
   const status = req.nextUrl.searchParams.get('status');
   const source = req.nextUrl.searchParams.get('source');
   const search = req.nextUrl.searchParams.get('search');
@@ -26,6 +30,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const unauthorized = await requireAuth(req);
+  if (unauthorized) return unauthorized;
+
   const body = await req.json();
   const { title, discount, description, category, validUntil, status, source, merchantId, merchantName } = body;
 
