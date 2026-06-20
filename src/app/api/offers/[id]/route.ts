@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/apiAuth';
+import { deleteOfferMirror, mirrorOffer } from '@/lib/firebase';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const unauthorized = await requireAuth(req);
@@ -20,6 +21,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   try {
     const offer = await prisma.offer.update({ where: { id }, data: updates });
+    await mirrorOffer(offer);
     return NextResponse.json(offer);
   } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -34,6 +36,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (isNaN(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
   try {
     await prisma.offer.delete({ where: { id } });
+    await deleteOfferMirror(id);
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });

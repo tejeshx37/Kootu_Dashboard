@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/apiAuth';
+import { mirrorMerchant } from '@/lib/firebase';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const unauthorized = await requireAuth(req);
@@ -19,6 +20,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   try {
     const merchant = await prisma.merchant.update({ where: { id }, data: updates });
+    await mirrorMerchant(merchant);
     return NextResponse.json(merchant);
   } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });

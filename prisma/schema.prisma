@@ -28,6 +28,7 @@ model Offer {
   validUntil  String?
   status      String    @default("pending")
   source      String    @default("manual")
+  sourceFileUrl String?
   createdAt   DateTime  @default(now())
   merchantId  Int?
   merchant    Merchant? @relation(fields: [merchantId], references: [id])

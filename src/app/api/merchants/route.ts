@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/apiAuth';
+import { mirrorMerchant } from '@/lib/firebase';
 
 export async function GET(req: NextRequest) {
   const unauthorized = await requireAuth(req);
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
         status: status || 'pending',
       },
     });
+    await mirrorMerchant(merchant);
     return NextResponse.json(merchant, { status: 201 });
   } catch (err: any) {
     if (err?.code === 'P2002') {

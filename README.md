@@ -10,6 +10,7 @@ Internal admin console for the Kootu offers/deals aggregation platform (Tamil Na
 - NextAuth.js (credentials provider, admin only)
 - Google Gemini SDK (`gemini-2.5-flash`) for AI offer extraction
 - `mammoth` (DOCX) + `pdf-parse` (PDF) for file parsing
+- Firebase Admin: optional Firestore mirror of all data, plus Firebase Storage for AI-extractor source uploads
 
 ## Setup
 
@@ -49,6 +50,30 @@ All `/dashboard`, `/extractor`, `/offers`, `/merchants` routes are gated by `mid
 - `PATCH /api/merchants/:id`
 - `GET|POST /api/offers`
 - `PATCH|DELETE /api/offers/:id`
-- `POST /api/extract` — multipart form with `sourceType` (`url|text|pdf|docx`), `content`, `file`
+- `POST /api/extract` — multipart form with `sourceType` (`url|text|pdf|docx|image`), `content`, `file`
+- `POST /api/offers/from-ai` — multipart batch insert for AI-extracted offers; uploads the source file to Firebase Storage and attaches its URL to every created offer
 
 The Gemini key never leaves the server — all extraction goes through `/api/extract`, which also requires an authenticated admin session.
+
+## Firebase (optional)
+
+SQLite via Prisma is the source of truth. If you supply Firebase Admin
+credentials, every merchant/offer/extraction-log write is mirrored to
+Firestore (best-effort — failures are logged, never block the request),
+and the original file behind an AI extraction is uploaded to Firebase
+Storage **only when the admin actually clicks "Add Selected Offers for
+Review."** That Storage URL is saved on each created offer
+(`sourceFileUrl`) so reviewers can pop the original poster/PDF/DOCX in a
+new tab.
+
+To enable, set in `.env.local`:
+
+```
+FIREBASE_PROJECT_ID="..."
+FIREBASE_CLIENT_EMAIL="...@....iam.gserviceaccount.com"
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+FIREBASE_STORAGE_BUCKET="your-project.appspot.com"
+```
+
+Leave any of them blank to silently disable Firebase. The dashboard
+keeps working from SQLite alone.
