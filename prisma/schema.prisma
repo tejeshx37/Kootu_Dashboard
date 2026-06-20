@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Merchant {
+  id        Int      @id @default(autoincrement())
+  name      String
+  category  String
+  email     String   @unique
+  phone     String
+  city      String
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  offers    Offer[]
+}
+
+model Offer {
+  id          Int       @id @default(autoincrement())
+  title       String
+  discount    String
+  description String
+  category    String
+  validUntil  String?
+  status      String    @default("pending")
+  source      String    @default("manual")
+  createdAt   DateTime  @default(now())
+  merchantId  Int?
+  merchant    Merchant? @relation(fields: [merchantId], references: [id])
+}
+
+model ExtractionLog {
+  id          Int      @id @default(autoincrement())
+  sourceType  String
+  sourceRef   String?
+  offersFound Int
+  createdAt   DateTime @default(now())
+}
