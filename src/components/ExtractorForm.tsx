@@ -121,7 +121,7 @@ export function ExtractorForm() {
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
             />
             <p className="mt-2 text-xs text-slate-500">
-              Claude will search and extract all offers from this page.
+              Gemini will read the page contents and extract all offers from it.
             </p>
           </div>
         )}

@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    serverComponentsExternalPackages: ['pdf-parse', 'mammoth', '@anthropic-ai/sdk'],
+    serverComponentsExternalPackages: ['pdf-parse', 'mammoth', '@google/genai'],
   },
 };
 

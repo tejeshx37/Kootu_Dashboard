@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/apiAuth';
@@ -18,7 +18,6 @@ function parseOffers(raw: string): any[] {
     const parsed = JSON.parse(text);
     if (Array.isArray(parsed)) return parsed;
   } catch {}
-  // balanced-bracket fallback
   const start = text.indexOf('[');
   if (start >= 0) {
     let depth = 0;
@@ -57,6 +56,25 @@ async function readFormFile(req: NextRequest): Promise<{ sourceType: string; con
   return { sourceType, content };
 }
 
+async function fetchUrlAsText(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (KootuExtractor)' },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch URL (HTTP ${res.status})`);
+  }
+  const html = await res.text();
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 50_000);
+}
+
 export async function POST(req: NextRequest) {
   const unauthorized = await requireAuth(req);
   if (unauthorized) return unauthorized;
@@ -70,7 +88,6 @@ export async function POST(req: NextRequest) {
 
     let userMessage = '';
     let sourceRef: string | null = null;
-    const tools: any[] = [];
 
     if (sourceType === 'text') {
       if (!content.trim()) return NextResponse.json({ error: 'No content provided' }, { status: 400 });
@@ -78,8 +95,11 @@ export async function POST(req: NextRequest) {
     } else if (sourceType === 'url') {
       if (!content.trim()) return NextResponse.json({ error: 'No URL provided' }, { status: 400 });
       sourceRef = content;
-      userMessage = `Search the web for offers, deals, and promotions on this page: ${content}\n\nExtract all offers from that source.`;
-      tools.push({ type: 'web_search_20250305', name: 'web_search' });
+      const pageText = await fetchUrlAsText(content);
+      if (!pageText) {
+        return NextResponse.json({ error: 'Fetched page had no readable text' }, { status: 400 });
+      }
+      userMessage = `Source URL: ${content}\n\n${pageText}`;
     } else if (sourceType === 'pdf') {
       if (!file) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
       sourceRef = file.name;
@@ -97,22 +117,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No extractable content found' }, { status: 400 });
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured' }, { status: 500 });
+      return NextResponse.json({ error: 'GEMINI_API_KEY is not configured' }, { status: 500 });
     }
 
-    const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
-      system: SYSTEM_PROMPT,
-      tools: tools.length ? tools : undefined,
-      messages: [{ role: 'user', content: userMessage }],
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: userMessage,
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+        responseMimeType: 'application/json',
+        maxOutputTokens: 2000,
+      },
     });
 
-    const textBlock = response.content.find((b: any) => b.type === 'text') as { type: 'text'; text: string } | undefined;
-    const raw = textBlock?.text || '';
+    const raw = response.text ?? '';
     const offers = parseOffers(raw);
 
     await prisma.extractionLog.create({
