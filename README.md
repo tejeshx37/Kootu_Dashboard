@@ -15,11 +15,17 @@ Internal admin console for the Kootu offers/deals aggregation platform (Tamil Na
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in ANTHROPIC_API_KEY
+# Optional: override secrets locally (the tracked .env has SQLite + dev defaults)
+cp .env.example .env.local
+# then edit .env.local and set ANTHROPIC_API_KEY
 npx prisma db push
 npm run db:seed
 npm run dev
 ```
+
+The repo ships a tracked `.env` with SQLite + dev placeholders so Prisma and
+Next.js work out of the box. Put real secrets (especially `ANTHROPIC_API_KEY`)
+in `.env.local`, which is gitignored and takes precedence.
 
 Login: `admin@kootu.in` / `admin123` (configurable via `.env.local`).
 
