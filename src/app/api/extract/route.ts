@@ -8,9 +8,12 @@ import { mirrorExtractionLog } from '@/lib/firebase';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const SYSTEM_PROMPT = `You are an offer extraction specialist. Extract ALL offers, deals, discounts, and promotions from the provided content. Return ONLY a raw JSON array with no markdown fences, no explanation. Each item must have exactly these fields:
+const SYSTEM_PROMPT = `You are an offer extraction specialist. Extract ALL offers, deals, discounts, and promotions from the provided content. The content may be plain text, a PDF/DOCX dump, or a webpage where most ads appear inside the attached poster images — read text out of every image attached. Each distinct poster, ad, or promotion is a separate item; do not merge them.
+
+Return ONLY a raw JSON array with no markdown fences, no explanation. Each item must have exactly these fields:
 {"title":"offer title","merchant":"brand/merchant name","discount":"e.g. 30% off or BOGO or Free item","description":"brief description under 100 chars","validUntil":"YYYY-MM-DD or empty string","category":"Food & Dining|Fashion|Electronics|Travel|Beauty|Health|Entertainment|Shopping"}
-If a field is unknown use empty string. Never return empty array without trying hard.`;
+
+If a field is unknown use empty string. Never return an empty array without trying hard. Skip generic navigation, follow-us prompts, and the site's own branding — only real merchant offers.`;
 
 function parseOffers(raw: string): any[] {
   let text = raw.trim();
@@ -74,7 +77,7 @@ function guessImageMime(name: string): string {
   }
 }
 
-async function fetchUrlAsText(url: string): Promise<string> {
+async function fetchUrlAsText(url: string): Promise<{ text: string; html: string }> {
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (KootuExtractor)' },
     signal: AbortSignal.timeout(15_000),
@@ -83,7 +86,7 @@ async function fetchUrlAsText(url: string): Promise<string> {
     throw new Error(`Failed to fetch URL (HTTP ${res.status})`);
   }
   const html = await res.text();
-  return html
+  const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ')
@@ -91,6 +94,71 @@ async function fetchUrlAsText(url: string): Promise<string> {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 50_000);
+  return { text, html };
+}
+
+const IMAGE_FETCH_LIMIT = 10;
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_TIMEOUT_MS = 10_000;
+
+function extractImageUrls(html: string, pageUrl: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  // <img src="..."> and srcset variants
+  const imgRe = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(html)) !== null) {
+    let src = m[1].trim();
+    if (!src || src.startsWith('data:')) continue;
+    // Skip obvious sprite/icon paths and SVGs (Gemini chokes on raster-less SVG)
+    if (/\.(svg)(\?|$)/i.test(src)) continue;
+    if (/(?:^|\/)(icon|logo|favicon|sprite|avatar|emoji)/i.test(src)) continue;
+    try {
+      const abs = new URL(src, pageUrl).toString();
+      if (!seen.has(abs)) {
+        seen.add(abs);
+        out.push(abs);
+      }
+    } catch {
+      // ignore unparseable
+    }
+    if (out.length >= IMAGE_FETCH_LIMIT * 3) break; // collect a bit extra to filter from
+  }
+  return out;
+}
+
+async function fetchImage(
+  url: string
+): Promise<{ data: string; mimeType: string } | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (KootuExtractor)' },
+      signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const ct = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!ct.startsWith('image/') || ct === 'image/svg+xml') return null;
+    const len = Number(res.headers.get('content-length') || 0);
+    if (len && len > IMAGE_MAX_BYTES) return null;
+    const ab = await res.arrayBuffer();
+    if (ab.byteLength > IMAGE_MAX_BYTES) return null;
+    // Skip very small images — likely UI chrome, not posters.
+    if (ab.byteLength < 8 * 1024) return null;
+    return { data: Buffer.from(ab).toString('base64'), mimeType: ct };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPageImages(
+  imageUrls: string[]
+): Promise<Array<{ inlineData: { data: string; mimeType: string } }>> {
+  const candidates = imageUrls.slice(0, IMAGE_FETCH_LIMIT * 3);
+  const fetched = await Promise.all(candidates.map(fetchImage));
+  const ok = fetched.filter(
+    (x): x is { data: string; mimeType: string } => x !== null
+  );
+  return ok.slice(0, IMAGE_FETCH_LIMIT).map((img) => ({ inlineData: img }));
 }
 
 export async function POST(req: NextRequest) {
@@ -107,6 +175,7 @@ export async function POST(req: NextRequest) {
     let userMessage = '';
     let sourceRef: string | null = null;
     let imagePart: { inlineData: { data: string; mimeType: string } } | null = null;
+    let pageImageParts: Array<{ inlineData: { data: string; mimeType: string } }> = [];
 
     if (sourceType === 'text') {
       if (!content.trim()) return NextResponse.json({ error: 'No content provided' }, { status: 400 });
@@ -114,11 +183,21 @@ export async function POST(req: NextRequest) {
     } else if (sourceType === 'url') {
       if (!content.trim()) return NextResponse.json({ error: 'No URL provided' }, { status: 400 });
       sourceRef = content;
-      const pageText = await fetchUrlAsText(content);
-      if (!pageText) {
-        return NextResponse.json({ error: 'Fetched page had no readable text' }, { status: 400 });
+      const { text: pageText, html } = await fetchUrlAsText(content);
+      const imgUrls = extractImageUrls(html, content);
+      pageImageParts = await fetchPageImages(imgUrls);
+      if (!pageText && pageImageParts.length === 0) {
+        return NextResponse.json(
+          { error: 'Fetched page had no readable text or images' },
+          { status: 400 }
+        );
       }
-      userMessage = `Source URL: ${content}\n\n${pageText}`;
+      userMessage =
+        `Source URL: ${content}\n\n` +
+        (pageImageParts.length > 0
+          ? `The page contains ${pageImageParts.length} attached poster image(s). Read offer text from BOTH the page text and the images. Many offers on sites like this only appear inside the images.\n\n`
+          : '') +
+        `Page text:\n${pageText}`;
     } else if (sourceType === 'pdf') {
       if (!file) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
       sourceRef = file.name;
@@ -153,6 +232,7 @@ export async function POST(req: NextRequest) {
     const ai = new GoogleGenAI({ apiKey });
     const parts: any[] = [];
     if (imagePart) parts.push(imagePart);
+    for (const p of pageImageParts) parts.push(p);
     if (userMessage) parts.push({ text: userMessage });
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
@@ -160,7 +240,7 @@ export async function POST(req: NextRequest) {
       config: {
         systemInstruction: SYSTEM_PROMPT,
         responseMimeType: 'application/json',
-        maxOutputTokens: 2000,
+        maxOutputTokens: 4000,
       },
     });
 
