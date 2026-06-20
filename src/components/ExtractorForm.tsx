@@ -40,14 +40,21 @@ export function ExtractorForm() {
   const [results, setResults] = useState<Extracted[] | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
+  // Snapshot of the source the user actually ran extraction against, so the
+  // upload-to-Firebase step uses that exact file even if they swap tabs.
+  const [extractedSource, setExtractedSource] = useState<
+    { sourceType: 'url' | 'text' | 'pdf' | 'docx' | 'image'; file?: File } | null
+  >(null);
 
   async function extract() {
     setError(null);
     setResults(null);
     setLoading(true);
     try {
+      const resolvedType: 'url' | 'text' | 'pdf' | 'docx' | 'image' =
+        tab === 'file' ? (file?.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'docx') : tab;
       const form = new FormData();
-      form.set('sourceType', tab === 'file' ? (file?.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'docx') : tab);
+      form.set('sourceType', resolvedType);
       if (tab === 'url') form.set('content', url);
       else if (tab === 'text') form.set('content', text);
       else if (tab === 'file' && file) form.set('file', file);
@@ -59,6 +66,10 @@ export function ExtractorForm() {
       const offers: Extracted[] = data.offers || [];
       setResults(offers);
       setSelected(new Set(offers.map((_, i) => i)));
+      setExtractedSource({
+        sourceType: resolvedType,
+        file: tab === 'file' ? file ?? undefined : tab === 'image' ? image ?? undefined : undefined,
+      });
       if (offers.length === 0) setError('No offers found in the provided content.');
     } catch (err: any) {
       setError(err?.message || 'Extraction failed');
@@ -78,22 +89,19 @@ export function ExtractorForm() {
     if (!results) return;
     setAdding(true);
     const picks = results.filter((_, i) => selected.has(i));
-    for (const o of picks) {
-      await fetch('/api/offers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: o.title || 'Untitled offer',
-          discount: o.discount,
-          description: o.description,
-          category: o.category || 'Shopping',
-          validUntil: o.validUntil || null,
-          status: 'pending',
-          source: 'ai',
-          merchantName: o.merchant,
-        }),
-      });
-    }
+    const payload = picks.map((o) => ({
+      title: o.title || 'Untitled offer',
+      discount: o.discount,
+      description: o.description,
+      category: o.category || 'Shopping',
+      validUntil: o.validUntil || null,
+      merchantName: o.merchant,
+    }));
+    const form = new FormData();
+    form.set('offers', JSON.stringify(payload));
+    form.set('sourceType', extractedSource?.sourceType || '');
+    if (extractedSource?.file) form.set('file', extractedSource.file);
+    await fetch('/api/offers/from-ai', { method: 'POST', body: form });
     setAdding(false);
     show(`Added ${picks.length} offer${picks.length === 1 ? '' : 's'} for review`);
     router.push('/offers');

@@ -17,6 +17,7 @@ type Offer = {
   validUntil: string | null;
   status: string;
   source: string;
+  sourceFileUrl: string | null;
   merchant: { id: number; name: string } | null;
 };
 
@@ -147,7 +148,22 @@ export function OffersClient() {
                   <td className="px-4 py-3 text-slate-600">{o.category}</td>
                   <td className="px-4 py-3 text-slate-600">{o.discount}</td>
                   <td className="px-4 py-3 text-slate-600">{o.validUntil || '—'}</td>
-                  <td className="px-4 py-3"><SourceBadge source={o.source} /></td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <SourceBadge source={o.source} />
+                      {o.sourceFileUrl && (
+                        <a
+                          href={o.sourceFileUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-primary hover:underline"
+                          title="View original source"
+                        >
+                          📎
+                        </a>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3"><StatusBadge status={o.status} /></td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-2">

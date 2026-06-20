@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/apiAuth';
+import { mirrorOffer } from '@/lib/firebase';
 
 export async function GET(req: NextRequest) {
   const unauthorized = await requireAuth(req);
@@ -62,5 +63,6 @@ export async function POST(req: NextRequest) {
     include: { merchant: { select: { id: true, name: true } } },
   });
 
+  await mirrorOffer(offer);
   return NextResponse.json(offer, { status: 201 });
 }

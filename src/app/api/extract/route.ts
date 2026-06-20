@@ -3,6 +3,7 @@ import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/apiAuth';
+import { mirrorExtractionLog } from '@/lib/firebase';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -166,13 +167,14 @@ export async function POST(req: NextRequest) {
     const raw = response.text ?? '';
     const offers = parseOffers(raw);
 
-    await prisma.extractionLog.create({
+    const log = await prisma.extractionLog.create({
       data: {
         sourceType,
         sourceRef,
         offersFound: offers.length,
       },
     });
+    await mirrorExtractionLog(log);
 
     return NextResponse.json({ offers, count: offers.length });
   } catch (err: any) {
