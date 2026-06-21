@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/apiAuth';
 import { mirrorOffer } from '@/lib/firebase';
+import { geocodeAddress } from '@/lib/geocode';
 
 export async function GET(req: NextRequest) {
   const unauthorized = await requireAuth(req);
@@ -35,7 +36,9 @@ export async function POST(req: NextRequest) {
   if (unauthorized) return unauthorized;
 
   const body = await req.json();
-  const { title, discount, description, category, validUntil, status, source, merchantId, merchantName } = body;
+  const { title, discount, description, category, validUntil, status, source, merchantId, merchantName, address, area } = body;
+  let latitude = typeof body.latitude === 'number' ? body.latitude : null;
+  let longitude = typeof body.longitude === 'number' ? body.longitude : null;
 
   if (!title || !category) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -49,6 +52,14 @@ export async function POST(req: NextRequest) {
     if (m) resolvedMerchantId = m.id;
   }
 
+  if ((latitude == null || longitude == null) && (address || area)) {
+    const geo = await geocodeAddress([address, area].filter(Boolean).join(', '));
+    if (geo) {
+      latitude = geo.lat;
+      longitude = geo.lng;
+    }
+  }
+
   const offer = await prisma.offer.create({
     data: {
       title,
@@ -58,6 +69,10 @@ export async function POST(req: NextRequest) {
       validUntil: validUntil || null,
       status: status || 'pending',
       source: source || 'manual',
+      address: address || null,
+      area: area || null,
+      latitude,
+      longitude,
       merchantId: resolvedMerchantId,
     },
     include: { merchant: { select: { id: true, name: true } } },

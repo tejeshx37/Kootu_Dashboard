@@ -22,6 +22,11 @@ type Extracted = {
   description: string;
   validUntil: string;
   category: string;
+  address?: string;
+  area?: string;
+  city?: string;
+  latitude?: number | string;
+  longitude?: number | string;
 };
 
 export function ExtractorForm() {
@@ -96,6 +101,11 @@ export function ExtractorForm() {
       category: o.category || 'Shopping',
       validUntil: o.validUntil || null,
       merchantName: o.merchant,
+      address: o.address || null,
+      area: o.area || null,
+      city: o.city || null,
+      latitude: typeof o.latitude === 'number' ? o.latitude : null,
+      longitude: typeof o.longitude === 'number' ? o.longitude : null,
     }));
     const form = new FormData();
     form.set('offers', JSON.stringify(payload));
@@ -290,6 +300,10 @@ export function ExtractorForm() {
                   <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-slate-500">
                     {o.category && <span>📂 {o.category}</span>}
                     {o.validUntil && <span>⏰ {o.validUntil}</span>}
+                    {(o.area || o.address) && <span>📍 {o.area || o.address}</span>}
+                    {typeof o.latitude === 'number' && typeof o.longitude === 'number' && (
+                      <span title={`${o.latitude}, ${o.longitude}`}>🌐</span>
+                    )}
                   </div>
                 </div>
               </label>

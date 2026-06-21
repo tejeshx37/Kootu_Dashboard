@@ -6,6 +6,7 @@ import net from 'node:net';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/apiAuth';
 import { mirrorExtractionLog } from '@/lib/firebase';
+import { geocodeAddress } from '@/lib/geocode';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,7 +14,9 @@ export const dynamic = 'force-dynamic';
 const SYSTEM_PROMPT = `You are an offer extraction specialist. Extract ALL offers, deals, discounts, and promotions from the provided content. The content may be plain text, a PDF/DOCX dump, or a webpage where most ads appear inside the attached poster images — read text out of every image attached. Each distinct poster, ad, or promotion is a separate item; do not merge them.
 
 Return ONLY a raw JSON array with no markdown fences, no explanation. Each item must have exactly these fields:
-{"title":"offer title","merchant":"brand/merchant name","discount":"e.g. 30% off or BOGO or Free item","description":"brief description under 100 chars","validUntil":"YYYY-MM-DD or empty string","category":"Food & Dining|Fashion|Electronics|Travel|Beauty|Health|Entertainment|Shopping"}
+{"title":"offer title","merchant":"brand/merchant name","discount":"e.g. 30% off or BOGO or Free item","description":"brief description under 100 chars","validUntil":"YYYY-MM-DD or empty string","category":"Food & Dining|Fashion|Electronics|Travel|Beauty|Health|Entertainment|Shopping","address":"full shop address as printed, including landmark and pincode","area":"neighbourhood / locality only (e.g. Velachery, T. Nagar)","city":"city name (e.g. Chennai, Salem)","latitude":number_or_empty_string,"longitude":number_or_empty_string}
+
+Newspaper and poster ads almost always print the shop address right under the offer ("Next to SBI, 100ft road, Velachery — 600042"). ALWAYS try to extract address / area / city. Only fill latitude/longitude if the source explicitly prints coordinates — do not guess.
 
 If a field is unknown use empty string. Never return an empty array without trying hard. Skip generic navigation, follow-us prompts, and the site's own branding — only real merchant offers.`;
 
@@ -403,6 +406,20 @@ export async function POST(req: NextRequest) {
 
     const raw = response.text ?? '';
     const offers = parseOffers(raw);
+
+    // Best-effort geocode: only addresses without coords.
+    for (const o of offers) {
+      const hasCoords =
+        typeof o.latitude === 'number' && typeof o.longitude === 'number';
+      if (hasCoords) continue;
+      const addr = [o.address, o.area, o.city].filter(Boolean).join(', ');
+      if (!addr) continue;
+      const geo = await geocodeAddress(addr);
+      if (geo) {
+        o.latitude = geo.lat;
+        o.longitude = geo.lng;
+      }
+    }
 
     const log = await prisma.extractionLog.create({
       data: {
