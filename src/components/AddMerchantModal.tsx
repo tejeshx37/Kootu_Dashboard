@@ -11,6 +11,7 @@ export function AddMerchantModal({ onClose, onCreated }: { onClose: () => void; 
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [city, setCity] = useState('');
+  const [address, setAddress] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -19,7 +20,7 @@ export function AddMerchantModal({ onClose, onCreated }: { onClose: () => void; 
     const res = await fetch('/api/merchants', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, category, email, phone, city }),
+      body: JSON.stringify({ name, category, email, phone, city, address: address || null }),
     });
     setBusy(false);
     if (res.ok) {
@@ -52,6 +53,15 @@ export function AddMerchantModal({ onClose, onCreated }: { onClose: () => void; 
           </Field>
           <Field label="City*">
             <input required value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} />
+          </Field>
+          <Field label="Address">
+            <textarea
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              rows={2}
+              placeholder="Shop address (server will geocode)"
+              className={inputCls}
+            />
           </Field>
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>

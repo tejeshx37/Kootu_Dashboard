@@ -52,6 +52,11 @@ All `/dashboard`, `/extractor`, `/offers`, `/merchants` routes are gated by `mid
 - `PATCH|DELETE /api/offers/:id`
 - `POST /api/extract` — multipart form with `sourceType` (`url|text|pdf|docx|image`), `content`, `file`
 - `POST /api/offers/from-ai` — multipart batch insert for AI-extracted offers; uploads the source file to Firebase Storage and attaches its URL to every created offer
+- `GET /api/offers/near?lat=&lng=&radiusKm=` — active offers within `radiusKm` (default 5, max 100) of `lat,lng`, sorted by `distanceKm`. Effective coordinates fall back to the merchant's if the offer doesn't have its own.
+
+### Location & geocoding
+
+Both `Merchant` and `Offer` carry `address`, `area`, `latitude`, and `longitude`. Set `GOOGLE_MAPS_API_KEY` in `.env.local` to auto-geocode addresses on extraction and on manual offer/merchant creation; without it, addresses are stored as text and lat/lng stays null (the proximity endpoint just won't see those rows).
 
 The Gemini key never leaves the server — all extraction goes through `/api/extract`, which also requires an authenticated admin session.
 

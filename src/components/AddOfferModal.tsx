@@ -15,6 +15,7 @@ export function AddOfferModal({ onClose, onCreated }: { onClose: () => void; onC
   const [discount, setDiscount] = useState('');
   const [description, setDescription] = useState('');
   const [validUntil, setValidUntil] = useState('');
+  const [address, setAddress] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -40,6 +41,7 @@ export function AddOfferModal({ onClose, onCreated }: { onClose: () => void; onC
         discount,
         description,
         validUntil: validUntil || null,
+        address: address || null,
         status: 'pending',
         source: 'manual',
       }),
@@ -83,6 +85,15 @@ export function AddOfferModal({ onClose, onCreated }: { onClose: () => void; onC
           </Field>
           <Field label="Valid Until">
             <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className={inputCls} />
+          </Field>
+          <Field label="Address">
+            <textarea
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              rows={2}
+              placeholder="Shop address (server will geocode)"
+              className={inputCls}
+            />
           </Field>
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
