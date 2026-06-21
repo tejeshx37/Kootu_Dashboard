@@ -14,6 +14,10 @@ model Merchant {
   email     String   @unique
   phone     String
   city      String
+  address   String?
+  area      String?
+  latitude  Float?
+  longitude Float?
   status    String   @default("pending")
   createdAt DateTime @default(now())
   offers    Offer[]
@@ -29,6 +33,10 @@ model Offer {
   status      String    @default("pending")
   source      String    @default("manual")
   sourceFileUrl String?
+  address     String?
+  area        String?
+  latitude    Float?
+  longitude   Float?
   createdAt   DateTime  @default(now())
   merchantId  Int?
   merchant    Merchant? @relation(fields: [merchantId], references: [id])

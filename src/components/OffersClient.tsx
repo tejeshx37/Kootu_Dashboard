@@ -18,6 +18,10 @@ type Offer = {
   status: string;
   source: string;
   sourceFileUrl: string | null;
+  address: string | null;
+  area: string | null;
+  latitude: number | null;
+  longitude: number | null;
   merchant: { id: number; name: string } | null;
 };
 
@@ -121,6 +125,7 @@ export function OffersClient() {
               <tr className="border-b border-slate-100 text-left text-xs uppercase text-slate-500">
                 <th className="px-4 py-3 font-medium">Title</th>
                 <th className="px-4 py-3 font-medium">Merchant</th>
+                <th className="px-4 py-3 font-medium">Area</th>
                 <th className="px-4 py-3 font-medium">Category</th>
                 <th className="px-4 py-3 font-medium">Discount</th>
                 <th className="px-4 py-3 font-medium">Valid Until</th>
@@ -133,18 +138,24 @@ export function OffersClient() {
               {items === null &&
                 Array.from({ length: 4 }).map((_, i) => (
                   <tr key={i} className="border-b border-slate-50">
-                    <td colSpan={8} className="px-4 py-4">
+                    <td colSpan={9} className="px-4 py-4">
                       <div className="h-4 animate-pulse rounded bg-slate-100" />
                     </td>
                   </tr>
                 ))}
               {items && items.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500">No offers found.</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">No offers found.</td></tr>
               )}
               {items?.map((o) => (
                 <tr key={o.id} className="border-b border-slate-50 last:border-0">
                   <td className="px-4 py-3 font-medium text-slate-900">{o.title}</td>
                   <td className="px-4 py-3 text-slate-600">{o.merchant?.name || '—'}</td>
+                  <td className="px-4 py-3 text-slate-600" title={o.address || undefined}>
+                    {o.area || '—'}
+                    {o.latitude != null && o.longitude != null && (
+                      <span className="ml-1 text-[10px] text-slate-400" title={`${o.latitude}, ${o.longitude}`}>🌐</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-slate-600">{o.category}</td>
                   <td className="px-4 py-3 text-slate-600">{o.discount}</td>
                   <td className="px-4 py-3 text-slate-600">{o.validUntil || '—'}</td>
