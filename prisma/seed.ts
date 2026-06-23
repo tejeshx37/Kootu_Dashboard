@@ -194,6 +194,8 @@ const kundrathurOffers = [
   // MakeMyTrip
   { title: 'Pondicherry Weekend ₹3,499/person', merchant: 'MakeMyTrip Express Porur', category: 'Travel', discount: '₹3,499 package', description: '2N/3D Pondicherry weekend package incl. stay and breakfast', validUntil: '2026-10-31', status: 'active', source: 'manual' },
 ];
+
+async function main() {
   for (const m of merchants) {
     await prisma.merchant.upsert({
       where: { email: m.email },
