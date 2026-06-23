@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { mirrorMerchant, mirrorOffer } from '../src/lib/firebase';
 
 const prisma = new PrismaClient();
 
@@ -197,18 +198,19 @@ const kundrathurOffers = [
 
 async function main() {
   for (const m of merchants) {
-    await prisma.merchant.upsert({
+    const row = await prisma.merchant.upsert({
       where: { email: m.email },
       update: {},
       create: m,
     });
+    await mirrorMerchant(row);
   }
 
   for (const o of offers) {
     const merchant = await prisma.merchant.findFirst({ where: { name: o.merchant } });
     const existing = await prisma.offer.findFirst({ where: { title: o.title } });
     if (existing) continue;
-    await prisma.offer.create({
+    const row = await prisma.offer.create({
       data: {
         title: o.title,
         category: o.category,
@@ -220,10 +222,11 @@ async function main() {
         merchantId: merchant?.id,
       },
     });
+    await mirrorOffer(row);
   }
 
   for (const m of velacheryMerchants) {
-    await prisma.merchant.upsert({
+    const row = await prisma.merchant.upsert({
       where: { email: m.email },
       update: {
         area: m.area,
@@ -233,13 +236,14 @@ async function main() {
       },
       create: m,
     });
+    await mirrorMerchant(row);
   }
 
   for (const o of velacheryOffers) {
     const merchant = await prisma.merchant.findFirst({ where: { name: o.merchant } });
     const existing = await prisma.offer.findFirst({ where: { title: o.title } });
     if (existing) continue;
-    await prisma.offer.create({
+    const row = await prisma.offer.create({
       data: {
         title: o.title,
         category: o.category,
@@ -255,10 +259,11 @@ async function main() {
         longitude: merchant?.longitude ?? null,
       },
     });
+    await mirrorOffer(row);
   }
 
   for (const m of [...chennaiMerchants, ...kundrathurMerchants]) {
-    await prisma.merchant.upsert({
+    const row = await prisma.merchant.upsert({
       where: { email: m.email },
       update: {
         area: m.area,
@@ -268,13 +273,14 @@ async function main() {
       },
       create: m,
     });
+    await mirrorMerchant(row);
   }
 
   for (const o of [...chennaiOffers, ...kundrathurOffers]) {
     const merchant = await prisma.merchant.findFirst({ where: { name: o.merchant } });
     const existing = await prisma.offer.findFirst({ where: { title: o.title } });
     if (existing) continue;
-    await prisma.offer.create({
+    const row = await prisma.offer.create({
       data: {
         title: o.title,
         category: o.category,
@@ -290,6 +296,7 @@ async function main() {
         longitude: merchant?.longitude ?? null,
       },
     });
+    await mirrorOffer(row);
   }
 
   console.log('Seed complete');
