@@ -9,10 +9,10 @@
     "lint": "next lint",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local prisma/seed.ts"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local prisma/seed.ts"
   },
   "dependencies": {
     "@google/genai": "^1.4.0",
